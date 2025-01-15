@@ -13,21 +13,51 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import division
-from __future__ import print_function
-
 # from google.appengine.api import users
-from framework import users
+from api.converters import feature_entry_to_json_verbose
 
-from internals import models
-import settings
+from internals import core_enums
+from internals import processes
+from internals import stage_helpers
+from internals.core_models import Stage
+from internals.review_models import Gate
 from framework import basehandlers
 from framework import permissions
-from internals import processes
 
 INTENT_PARAM = 'intent'
 LAUNCH_PARAM = 'launch'
 VIEW_FEATURE_URL = '/feature'
+
+
+def compute_subject_prefix(feature, intent_stage):
+  """Return part of the subject line for an intent email."""
+
+  if intent_stage == core_enums.INTENT_IMPLEMENT:
+    if feature.feature_type == core_enums.FEATURE_TYPE_DEPRECATION_ID:
+      return 'Intent to Deprecate and Remove'
+    else:
+      return 'Intent to Prototype'
+  elif intent_stage == core_enums.INTENT_EXPERIMENT:
+    return 'Ready for Developer Testing'
+  elif intent_stage == core_enums.INTENT_ORIGIN_TRIAL:
+    if feature.feature_type == core_enums.FEATURE_TYPE_DEPRECATION_ID:
+      return 'Request for Deprecation Trial'
+    else:
+      return 'Intent to Experiment'
+  elif intent_stage == core_enums.INTENT_EXTEND_ORIGIN_TRIAL:
+    if feature.feature_type == core_enums.FEATURE_TYPE_DEPRECATION_ID:
+      return 'Intent to Extend Deprecation Trial'
+    else:
+      return 'Intent to Extend Experiment'
+  elif intent_stage == core_enums.INTENT_SHIP:
+    if feature.feature_type == core_enums.FEATURE_TYPE_CODE_CHANGE_ID:
+      return 'Web-Facing Change PSA'
+    else:
+      return 'Intent to Ship'
+  elif intent_stage == core_enums.INTENT_REMOVED:
+    return 'Intent to Extend Deprecation Trial'
+
+  return f'Intent stage "{core_enums.INTENT_STAGES[intent_stage]}"'
 
 
 class IntentEmailPreviewHandler(basehandlers.FlaskHandler):
@@ -35,25 +65,53 @@ class IntentEmailPreviewHandler(basehandlers.FlaskHandler):
 
   TEMPLATE_PATH = 'admin/features/launch.html'
 
-  @permissions.require_edit_feature
-  def get_template_data(self, feature_id=None, stage_id=None):
-    f = self.get_specified_feature(feature_id=feature_id)
-    intent_stage = stage_id if stage_id is not None else f.intent_stage
+  def get_template_data(self, **kwargs):
+    feature_id = kwargs.get('feature_id', None)
+    intent_stage = kwargs.get('intent_stage', None)
+    gate_id = kwargs.get('gate_id', None)
+    if not gate_id and not intent_stage:
+      self.abort(400, 'Invalid gate ID and intent stage')
 
-    page_data = self.get_page_data(feature_id, f, intent_stage)
+    # Validate the user has edit permissions and redirect if needed.
+    redirect_resp = permissions.validate_feature_edit_permission(
+        self, feature_id)
+    if redirect_resp:
+      return redirect_resp
+
+    f = self.get_specified_feature(feature_id=feature_id)
+    gate = None
+    # Find the gate to add to the Chromestatus URL, and make sure the intent
+    # stage matches the gate.
+    if gate_id:
+      gate = Gate.get_by_id(gate_id)
+      if not gate:
+        self.abort(404, f'Gate not found for given ID {gate_id}')
+      stage = Stage.get_by_id(gate.stage_id)
+      intent_stage = (core_enums.INTENT_STAGES_BY_STAGE_TYPE[stage.stage_type]
+                      if stage else f.intent_stage)
+
+    page_data = self.get_page_data(feature_id, f, intent_stage, gate)
     return page_data
 
-  def get_page_data(self, feature_id, f, intent_stage):
+  def get_page_data(self, feature_id, f, intent_stage, gate: Gate | None=None):
     """Return a dictionary of data used to render the page."""
+
+    default_url = (f'{self.request.scheme}://{self.request.host}'
+                   f'{VIEW_FEATURE_URL}/{feature_id}')
+    if gate:
+      default_url += f'?gate={gate.key.integer_id()}'
+
+    stage_info = stage_helpers.get_stage_info_for_templates(f)
     page_data = {
-        'subject_prefix': self.compute_subject_prefix(f, intent_stage),
-        'feature': f.format_for_template(),
+        'subject_prefix': compute_subject_prefix(f, intent_stage),
+        'feature': feature_entry_to_json_verbose(f),
+        'stage_info': stage_info,
+        'should_render_mstone_table': stage_info['should_render_mstone_table'],
+        'should_render_intents': stage_info['should_render_intents'],
         'sections_to_show': processes.INTENT_EMAIL_SECTIONS.get(
             intent_stage, []),
         'intent_stage': intent_stage,
-        'default_url': '%s://%s%s/%s' % (
-            self.request.scheme, self.request.host,
-            VIEW_FEATURE_URL, feature_id),
+        'default_url': default_url,
     }
 
     if LAUNCH_PARAM in self.request.args:
@@ -62,31 +120,3 @@ class IntentEmailPreviewHandler(basehandlers.FlaskHandler):
       page_data[INTENT_PARAM] = True
 
     return page_data
-
-  def compute_subject_prefix(self, feature, intent_stage):
-    """Return part of the subject line for an intent email."""
-
-    if intent_stage == models.INTENT_INCUBATE:
-      if feature.feature_type == models.FEATURE_TYPE_DEPRECATION_ID:
-        return 'Intent to Deprecate and Remove'
-    elif intent_stage == models.INTENT_IMPLEMENT:
-      return 'Intent to Prototype'
-    elif intent_stage == models.INTENT_EXPERIMENT:
-      return 'Ready for Trial'
-    elif intent_stage == models.INTENT_EXTEND_TRIAL:
-      if feature.feature_type == models.FEATURE_TYPE_DEPRECATION_ID:
-        return 'Request for Deprecation Trial'
-      else:
-        return 'Intent to Experiment'
-    elif intent_stage == models.INTENT_SHIP:
-      return 'Intent to Ship'
-    elif intent_stage == models.INTENT_REMOVED:
-      return 'Intent to Extend Deprecation Trial'
-
-    return 'Intent stage "%s"' % models.INTENT_STAGES[intent_stage]
-
-app = basehandlers.FlaskApplication([
-  ('/admin/features/launch/<int:feature_id>', IntentEmailPreviewHandler),
-  ('/admin/features/launch/<int:feature_id>/<int:stage_id>',
-   IntentEmailPreviewHandler),
-], debug=settings.DEBUG)

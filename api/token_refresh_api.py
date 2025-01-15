@@ -13,14 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import division
-from __future__ import print_function
-
 import logging
+
+from chromestatus_openapi.models import TokenRefreshResponse
 
 from framework import basehandlers
 from framework import xsrf
-from internals import models
+from framework import users
 
 
 class TokenRefreshAPI(basehandlers.APIHandler):
@@ -40,11 +39,13 @@ class TokenRefreshAPI(basehandlers.APIHandler):
     xsrf.validate_token(token, email, timeout=xsrf.REFRESH_TOKEN_TIMEOUT_SEC)
 
   # Note: we use only POST instead of GET to avoid attacks that use GETs.
-  def do_post(self):
-    """Return a new XSRF token for the current user."""
+  def do_post(self, **kwargs):
+    """Refresh the session and return a new XSRF token for the current user."""
     user = self.get_current_user()
-    result = {
+    users.refresh_user_session()
+    result = TokenRefreshResponse.from_dict({
         'token': xsrf.generate_token(user.email()),
         'token_expires_sec': xsrf.token_expires_sec(),
-        }
-    return result
+        })
+    self._update_last_visit_field(user.email())
+    return result.to_dict()

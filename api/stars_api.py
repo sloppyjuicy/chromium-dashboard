@@ -13,13 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import division
-from __future__ import print_function
-
-import logging
+from chromestatus_openapi.models import (GetStarsResponse, SuccessMessage)
 
 from framework import basehandlers
-from internals import models
 from internals import notifier
 
 
@@ -28,7 +24,7 @@ class StarsAPI(basehandlers.APIHandler):
   logic to toggle the star icon.  When a user has starred a feature, they
   will be sent notification emails about changes to that feature."""
 
-  def do_get(self):
+  def do_get(self, **kwargs):
     """Return a list of all starred feature IDs for the signed-in user."""
     user = self.get_current_user()
     if user:
@@ -36,17 +32,21 @@ class StarsAPI(basehandlers.APIHandler):
     else:
       feature_ids = []  # Anon users cannot star features.
 
-    data = {
-        'featureIds': feature_ids,
-        }
-    return data
+    result = GetStarsResponse.from_dict({
+        'feature_ids': feature_ids,
+        }).to_dict()
+    #TODO(markxiong0122): delete this backward compatibility code after 30 days
+    result['featureIds'] = result['feature_ids']
 
-  def do_post(self):
+    return result
+
+  def do_post(self, **kwargs):
     """Set or clear a star on the specified feature."""
     feature = self.get_specified_feature()
     starred = self.get_bool_param('starred', default=True)
     user = self.get_current_user(required=True)
 
-    notifier.FeatureStar.set_star(user.email(), feature.key.integer_id(), starred)
+    notifier.FeatureStar.set_star(
+        user.email(), feature.key.integer_id(), starred)
     # Callers don't use the JSON response for this API call.
-    return {'message': 'Done'}
+    return SuccessMessage(message='Done')

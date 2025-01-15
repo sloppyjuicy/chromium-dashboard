@@ -13,15 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import division
-from __future__ import print_function
 
 import base64
+import functools
 import hmac
 import logging
 import random
 import string
 import time
+import hashlib
 
 from framework import constants
 from framework import secrets
@@ -49,7 +49,12 @@ TOKEN_TIMEOUT_MARGIN_SEC = 5 * constants.SECS_PER_MINUTE
 # generated the token could be a little ahead of the one checking.
 CLOCK_SKEW_SEC = 5
 
-DELIMITER = ':'
+DELIMITER = ':'.encode()
+
+# Validating the token content takes a surprisingly long 50ms.
+# And, that computation is not dependent on any other inputs,
+# so we can use a LRU cache on the function.
+TOKEN_TIME_CACHE_MAX_SIZE = 1000
 
 
 def generate_token(user_email, token_time=None):
@@ -66,13 +71,44 @@ def generate_token(user_email, token_time=None):
     ValueError: if the XSRF secret was not configured.
   """
   token_time = token_time or int(time.time())
-  digester = hmac.new(secrets.get_xsrf_secret())
-  digester.update(user_email or '')
+  token_time = str(token_time).encode()
+  digester = hmac.new(secrets.get_xsrf_secret().encode(),
+                      digestmod=hashlib.sha256)
+  digester.update(user_email.encode() if user_email else b'')
   digester.update(DELIMITER)
-  digester.update(str(token_time))
+  digester.update(token_time)
   digest = digester.digest()
-  token = base64.urlsafe_b64encode('%s%s%d' % (digest, DELIMITER, token_time))
+  binary_token = base64.urlsafe_b64encode(digest+ DELIMITER + token_time)
+  token = binary_token.decode()
   return token
+
+
+@functools.lru_cache(maxsize=TOKEN_TIME_CACHE_MAX_SIZE)
+def _validate_and_get_token_time(token, user_email):
+  """If token content is valid, return token_time.  Otherwise, raise."""
+  if not token:
+    raise TokenIncorrect('missing token')
+  try:
+    decoded = base64.urlsafe_b64decode(token)
+    token_time = int(decoded.split(DELIMITER)[-1])
+  except (TypeError, ValueError):
+    raise TokenIncorrect('could not decode token')
+
+  # The given token should match the generated one with the same time.
+  expected_token = generate_token(user_email, token_time=token_time)
+  if len(token) != len(expected_token):
+    raise TokenIncorrect('presented token is wrong size')
+
+  # Perform constant time comparison to avoid timing attacks
+  different = 0
+  for res in zip(str(token), str(expected_token)):
+    different |= ord(res[0]) ^ ord(res[1])
+  if different:
+    raise TokenIncorrect(
+        'presented token does not match expected token: %r != %r' % (
+            token, expected_token))
+
+  return token_time
 
 
 def validate_token(
@@ -85,29 +121,8 @@ def validate_token(
   Raises:
     TokenIncorrect: if the token is missing or invalid.
   """
-  if not token:
-    raise TokenIncorrect('missing token')
-  try:
-    decoded = base64.urlsafe_b64decode(str(token))
-    token_time = int(decoded.split(DELIMITER)[-1])
-  except (TypeError, ValueError):
-    raise TokenIncorrect('could not decode token')
+  token_time = _validate_and_get_token_time(token, user_email)
   now = int(time.time())
-
-  # The given token should match the generated one with the same time.
-  expected_token = generate_token(user_email, token_time=token_time)
-  if len(token) != len(expected_token):
-    raise TokenIncorrect('presented token is wrong size')
-
-  # Perform constant time comparison to avoid timing attacks
-  different = 0
-  for x, y in zip(token, expected_token):
-    different |= ord(x) ^ ord(y)
-  if different:
-    raise TokenIncorrect(
-        'presented token does not match expected token: %r != %r' % (
-            token, expected_token))
-
   # We reject tokens from the future.
   if token_time > now + CLOCK_SKEW_SEC:
     raise TokenIncorrect('token is from future')

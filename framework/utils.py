@@ -13,22 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from __future__ import division
-from __future__ import print_function
-
 import calendar
 import datetime
-import flask
 import logging
+import requests
 import time
 import traceback
 
-# from google.appengine.api import users
-from framework import users
-
 import settings
 
-from django.utils import feedgenerator
+CHROMIUM_SCHEDULE_DATE_FORMAT = '%Y-%m-%dT%H:%M:%S'
 
 
 def normalized_name(val):
@@ -74,7 +68,7 @@ def retry(tries, delay=1, backoff=2):
             raise
           trace_str = traceback.format_exc()
           logging.warning('Retrying %s due to Exception: %s',
-                          func.__name__, trace_str)
+                          func.__name__, trace_str[:settings.MAX_LOG_LINE])
           time.sleep(_delay)
           _delay *= backoff  # Wait longer the next time we fail.
     return wrapper
@@ -90,40 +84,6 @@ def strip_trailing_slash(handler):
 
     return handler(self, *args, **kwargs) # Call the handler method
   return remove_slash
-
-
-def render_atom_feed(request, title, data):
-  features_url = '%s://%s%s' % (request.scheme,
-                                request.host,
-                                request.path.replace('.xml', ''))
-  feature_url_prefix = '%s://%s%s' % (request.scheme,
-                                      request.host,
-                                      '/feature')
-
-  feed = feedgenerator.Atom1Feed(
-      title=unicode('%s - %s' % (settings.APP_TITLE, title)),
-      link=features_url,
-      description=u'New features exposed to web developers',
-      language=u'en'
-  )
-  for f in data:
-    updated = f['updated']['when']
-    pubdate = datetime.datetime.strptime(str(updated[:19]),
-                                         '%Y-%m-%d  %H:%M:%S')
-    feed.add_item(
-        title=unicode(f['name']),
-        link='%s/%s' % (feature_url_prefix, f.get('id')),
-        description=f.get('summary', ''),
-        pubdate=pubdate,
-        author_name=unicode(settings.APP_TITLE),
-        categories=[f['category']]
-    )
-  headers = {
-      'Strict-Transport-Security':
-          'max-age=63072000; includeSubDomains; preload',
-      'Content-Type': 'application/atom+xml;charset=utf-8'}
-  text = feed.writeString('utf-8')
-  return text, headers
 
 
 _ZERO = datetime.timedelta(0)
@@ -153,3 +113,20 @@ def get_banner_time(timestamp):
     return None
   ts = datetime.datetime(*timestamp, tzinfo=_UTC)
   return calendar.timegm(ts.timetuple())
+
+
+def dedupe(list_with_duplicates):
+  """Return a list without duplicates, in the original order."""
+  return list(dict.fromkeys(list_with_duplicates))
+
+
+def get_chromium_milestone_info(milestone: int) -> dict:
+  try:
+    response = requests.get(
+      'https://chromiumdash.appspot.com/fetch_milestone_schedule'
+      f'?mstone={milestone}')
+    response.raise_for_status()
+  except requests.exceptions.RequestException as e:
+    logging.exception('Failed to get response from Chromium schedule API.')
+    raise e
+  return response.json()

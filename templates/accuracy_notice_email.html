@@ -1,0 +1,50 @@
+{% import 'email-styles.html' as styles %}
+<div style="{{styles.body}}">
+<div style="{{styles.branding}}">{{APP_TITLE}}</div>
+
+<div style="{{styles.content}} {{styles.content_alert}}">
+<section id="context" style="{{styles.section}}">
+  <table>
+    <tr>
+      <td>Your feature is slated to launch soon for M{{milestone}}. <b>Please verify the accuracy of </b><a
+          href="{{SITE_URL}}feature/{{id}}">{{feature.name}}</a>:</td>
+    </tr>
+    <tr>
+      <td>
+        <div style="{{styles.button_div}}">
+          <a href="{{SITE_URL}}guide/verify_accuracy/{{id}}" style="{{styles.button_a}}">Verify feature accuracy</a>
+        </div>
+      </td>
+    </tr>
+  </table>
+</section>
+
+<section id="details" style="{{styles.section}}">
+  <p>
+    {% include "estimated-milestones-table.html" %}
+  </p>
+  <p>
+    Your feature entry is an important resource for
+    cross functional teams that help drive adoption of new features and
+    enterprise IT admins who might be affected by web platform changes. We
+    need to have a record of whether your plans are changing or staying the same.
+  </p>
+</section>
+
+<section id="why-triggered" style="{{styles.section}}">
+  {% if is_escalated %}
+  <p>
+    In order to ensure feature data accuracy, this notification has been
+    escalated to extended contributors of this feature and to the Chromestatus team.
+  </p>
+  {% endif %}
+
+  <p>
+    You are receiving this notification because you are listed as
+    a{% if not is_escalated %}n owner{% endif %}{% if is_escalated %} contributor{% endif %}
+     of the ChromeStatus feature entry.
+  </p>
+</section>
+
+</div>
+</div>

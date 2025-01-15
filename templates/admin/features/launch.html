@@ -1,13 +1,10 @@
 {% extends "_base.html" %}
-{% load inline_file %}
 
 {% block page_title %}{{ feature.name }} - {% endblock %}
 
 {% block css %}
-<!-- <link rel="stylesheet" href="/static/css/forms.css"> -->
-<!-- <link rel="stylesheet" href="/static/css/features/launch.css"> -->
-<style>{% inline_file "/static/css/forms.css" %}</style>
-<style>{% inline_file "/static/css/features/launch.css" %}</style>
+<link rel="stylesheet" href="/static/css/forms.css?v={{app_version}}">
+<link rel="stylesheet" href="/static/css/features/launch.css?v={{app_version}}">
 {% endblock %}
 
 {% block subheader %}
@@ -47,8 +44,36 @@
 
 {% if intent %}
 <section>
-<h3>Copy and send this text for your "Intent to ..." email</h3>
-{% include "blink/intent_to_implement.html" %}
+  <h3>Copy and send this text for your "Intent to ..." email</h3>
+  <p>Email to</p>
+  <div class="subject">
+    blink-dev@chromium.org
+  </div>
+
+  <p>Subject</p>
+  <div class="subject">
+    {{subject_prefix}}:
+    {{feature.name}}
+  </div>
+
+  {#
+    Insted of vertical margins, <br> elements are used to create line breaks
+    that can be copied and pasted into a text editor.
+  #}
+
+  <p>Body
+    <span class="tooltip copy-text" style="float:right"
+          title="Copy text to clipboard">
+        <a href="#" data-tooltip>
+          <iron-icon icon="chromestatus:content_copy"
+                    id="copy-email-body"></iron-icon>
+        </a>
+    </span>
+  </p>
+
+  <div class="email">
+    {% include "blink/intent_to_implement.html" %}
+  </div> <!-- end email body div -->
 </section>
 {% endif %}
 
@@ -69,6 +94,20 @@ after that, you're free to ship your feature.
 {% block js %}
 <script nonce="{{nonce}}">
 // Remove loading spinner at page load.
-document.body.classList.remove('loading');
+  document.body.classList.remove('loading');
+
+  const copyEmailBodyEl = document.querySelector('#copy-email-body');
+  const emailBodyEl = document.querySelector('.email');
+  const toastEl = document.querySelector('chromedash-toast');
+  if (copyEmailBodyEl && emailBodyEl) {
+      copyEmailBodyEl.addEventListener('click', () => {
+          window.getSelection().removeAllRanges();
+          const range = document.createRange();
+          range.selectNode(emailBodyEl);
+          window.getSelection().addRange(range);
+          document.execCommand('copy');
+          toastEl.showMessage('Email body copied');
+      });
+  }
 </script>
 {% endblock %}

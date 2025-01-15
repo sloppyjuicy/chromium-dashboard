@@ -1,4 +1,6 @@
 name: Continuous Integration
+env:
+ CLOUDSDK_PYTHON: python3.11
 on:
   push:
     branches:
@@ -8,23 +10,23 @@ jobs:
   python_tests:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v4
 
       - name: set up Node.js
-        uses: actions/setup-node@v2
+        uses: actions/setup-node@v4
         with:
-          node-version: '8.x'
+          node-version: '18.x'
 
       - name: set up Python
-        uses: actions/setup-python@v2
+        uses: actions/setup-python@v5
         with:
-          python-version: '2.7'
+          python-version: '3.11'
 
       - name: pre-installation
         run: |
           # Remove existing google-cloud-sdk packages in Ubuntu.
           sudo rm -rf /usr/lib/google-cloud-sdk
-          curl https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-353.0.0-linux-x86_64.tar.gz | tar -zx > /dev/null
+          curl https://dl.google.com/dl/cloudsdk/channels/rapid/downloads/google-cloud-sdk-410.0.0-linux-x86_64.tar.gz | tar -zx > /dev/null
           # Substitute the downloaded google-cloud-sdk packages, due to https://stackoverflow.com/questions/42697026/install-google-cloud-components-error-from-gcloud-command.
           sudo mv google-cloud-sdk /usr/lib/
           sudo gcloud components update
@@ -35,12 +37,14 @@ jobs:
       - name: installation
         run: |
           npm install -g gulp
-          npm ci
-          npm run deps
-          npm run dev-deps
+          npm config set script-shell bash --global
+          npm run setup
 
       - name: lint
         run: npm run lint
+
+      - name: mypy
+        run: npm run mypy
 
       - name: test
         run: npm test
